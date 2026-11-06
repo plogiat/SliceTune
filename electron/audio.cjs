@@ -2,7 +2,13 @@ const { spawn } = require('node:child_process');
 const { mkdtemp, writeFile, readFile, rm } = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const ffmpegPath = () => process.env.SLICETUNE_FFMPEG || require('@ffmpeg-installer/ffmpeg').path;
+function unpackedExecutable(file) {
+  // spawn() cannot execute a virtual ASAR path, even when its file is unpacked.
+  // Use the real adjacent directory; keep development and override paths intact.
+  const match = /^(.*[\\/])app\.asar([\\/].*)$/.exec(file);
+  return match ? `${match[1]}app.asar.unpacked${match[2]}` : file;
+}
+const ffmpegPath = () => process.env.SLICETUNE_FFMPEG || unpackedExecutable(require('@ffmpeg-installer/ffmpeg').path);
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegPath(), ['-hide_banner', '-nostdin', '-y', ...args], { windowsHide: true });
@@ -51,4 +57,4 @@ async function encodeFile(data, output, format) {
     await runFfmpeg(['-i', input, ...codecs[format], '-f', format === 'mp3' ? 'mp3' : format, output]);
   });
 }
-module.exports = { decodeFile, processAudio, encodeFile, tempoFilters };
+module.exports = { decodeFile, processAudio, encodeFile, tempoFilters, unpackedExecutable };

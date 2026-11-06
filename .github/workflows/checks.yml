@@ -19,3 +19,5 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: node node_modules/electron/install.js
+      - run: node scripts/asar-smoke.mjs

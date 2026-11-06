@@ -13,7 +13,7 @@ const root=await mkdtemp(path.join(tmpdir(),'slicetune-test-'));
 let application;
 try {
   const samples=Float32Array.from({length:96000},(_,i)=>Math.sin(2*Math.PI*445*i/48000)*.3),wav=encodeWav([samples,samples],48000);
-  const input=path.join(root,'voice.wav');await writeFile(input,new Uint8Array(wav));
+  const input=path.join(root,'голос с пробелами.wav');await writeFile(input,new Uint8Array(wav));
   const video=path.join(root,'test.mp4');
   const generated=spawnSync(require('@ffmpeg-installer/ffmpeg').path,['-hide_banner','-y','-f','lavfi','-i','color=c=black:s=64x64:r=1','-i',input,'-t','2','-c:v','mpeg4','-c:a','aac',video],{encoding:'utf8',windowsHide:true});
   assert.equal(generated.status,0,generated.stderr);
@@ -26,9 +26,11 @@ try {
   assert.ok(Math.abs(pitchOf(bytes)-445)<3,'Tempo must preserve pitch');
   const shifted=Buffer.from(await processAudio({data,speed:1,semitones:12}),'base64');assert.ok(Math.abs(pitchOf(shifted)-890)<4,'Octave pitch shift');assert.ok(Math.abs(shifted.length-Buffer.from(data,'base64').length)<15000,'Pitch shift must preserve duration');
   console.log('PASS: native FFmpeg WAV/MP3/FLAC/OGG encode/decode, video extraction and 2x tempo');
-  const launch=()=>electron.launch({args:['--no-sandbox','--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream',...(process.platform==='linux'?['--headless','--ozone-platform=headless']:[]),`--user-data-dir=${path.join(root,'profile')}`,'.'],timeout:30000});
+  const launch=()=>electron.launch({executablePath:process.env.SLICETUNE_TEST_EXECUTABLE||undefined,args:['--no-sandbox','--use-fake-device-for-media-stream',...(process.platform==='linux'?['--headless','--ozone-platform=headless']:[]),`--user-data-dir=${path.join(root,'profile')}`,...(process.env.SLICETUNE_TEST_EXECUTABLE?[]:[process.env.SLICETUNE_TEST_APP||'.'])],timeout:30000});
   application=await launch();const page=await application.firstWindow();await page.waitForURL('**/dist/index.html');await page.locator('.empty-session').waitFor();
+  if(process.env.SLICETUNE_TEST_EXECUTABLE) assert.equal(await application.evaluate(({app})=>app.isPackaged),true);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',message=>{if(message.type()==='error')console.error('Renderer:',message.text());});
   await application.evaluate(({dialog},{root,input})=>{
     dialog.showOpenDialog=async()=>({canceled:false,filePaths:[input]});
     dialog.showSaveDialog=async(_window,options)=>({canceled:false,filePath:root+'/'+options.defaultPath});
@@ -44,10 +46,17 @@ try {
   const saved=JSON.parse(await readFile(path.join(root,'Новый проект.slicetune'),'utf8'));assert.equal(Object.keys(saved.assets).length,2);assert.ok(Math.abs(saved.tracks[0].clips[0].duration-1)<.1);
   console.log('PASS: Electron portable project save');
   for(const format of ['wav','mp3','flac','ogg']) {await page.locator('[data-action="export"]').click();await page.locator('#export-format').selectOption(format);await page.locator('[data-action="do-export"]').click();await page.locator('.busy-overlay').waitFor({state:'hidden',timeout:30000});assert.ok((await stat(path.join(root,`Новый проект.${format}`))).size>100);}
-  await page.locator('[data-action="record"]').first().click();await page.locator('.record.active').waitFor();await page.waitForTimeout(700);await page.locator('[data-action="stop"]').click();await page.waitForFunction(()=>document.querySelectorAll('.clip').length===2);
+  // A real File from a file input retains its OS path across the context bridge.
+  // A synthetic new File() cannot catch desktop drag-and-drop regressions.
+  await page.evaluate(()=>{const input=document.createElement('input');input.type='file';input.id='drop-fixture';input.style.display='none';document.body.append(input);});
+  await page.locator('#drop-fixture').setInputFiles(path.join(root,'encoded.mp3'));
+  await page.evaluate(()=>{const transfer=new DataTransfer();transfer.items.add(document.querySelector('#drop-fixture').files[0]);document.querySelector('.library').dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:transfer}));});
+  await page.waitForFunction(()=>document.querySelectorAll('.clip').length===2);assert.equal(await page.locator('.asset').count(),3);
+  console.log('PASS: desktop MP3 drag-and-drop via native File path');
+  await page.locator('[data-action="record"]').first().click();await page.locator('.record.active').waitFor();await page.waitForTimeout(700);await page.locator('[data-action="stop"]').click();await page.waitForFunction(()=>document.querySelectorAll('.clip').length===3);
   await page.waitForFunction(()=>document.querySelector('#save-status').textContent.includes('Автосохранено'));
   assert.deepEqual(errors,[]);await application.evaluate(({app})=>app.exit(0));await application.close();application=null;
-  application=await launch();const recovered=await application.firstWindow();await recovered.waitForURL('**/dist/index.html');await recovered.locator('[data-action="recover"]').waitFor();await recovered.locator('[data-action="recover"]').click();await recovered.waitForFunction(()=>document.querySelectorAll('.clip').length===2);
+  application=await launch();const recovered=await application.firstWindow();await recovered.waitForURL('**/dist/index.html');await recovered.locator('[data-action="recover"]').waitFor();await recovered.locator('[data-action="recover"]').click();await recovered.waitForFunction(()=>document.querySelectorAll('.clip').length===3);
   console.log('PASS: Electron import, tempo, save, four export formats, microphone recording, autosave and recovery after restart');
   await application.evaluate(({app})=>app.exit(0));await application.close();application=null;
 } catch(error) {if(application){const pages=application.windows();for(const p of pages){console.error('Desktop state:',await p.locator('#save-status').textContent().catch(()=>''),await p.locator('#toast').textContent().catch(()=>''));await p.screenshot({path:path.join(tmpdir(),'slicetune-desktop-failure.png')}).catch(()=>{});}}throw error;

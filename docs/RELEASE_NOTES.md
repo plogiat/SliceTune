@@ -1,4 +1,10 @@
-# SliceTune 0.1 — Tokyo Sunset Preview
+# SliceTune 0.1.2 — исправления импорта и записи
+
+- Исправлен запуск встроенного FFmpeg в установленном приложении. Импорт, конвертация и экспорт теперь используют реальный путь к программе вне ASAR-архива.
+- Подключён импорт перетаскиванием аудио и видео в окно. На существующую дорожку файлы добавляются с места отпускания; в библиотеку — отдельными дорожками.
+- Ошибки импорта остаются видимыми после завершения обработки.
+- Исправлены оба обработчика разрешения на аудиозапись. При системном запрете показаны инструкции и кнопка открытия настроек микрофона Windows; после изменения разрешений запись можно повторить.
+- Релиз проверяется запуском уже собранного Windows-приложения, включая импорт, перетаскивание MP3, запись и экспорт.
 
 Многодорожечный аудиоредактор для Windows 10/11 x64 с русским и английским интерфейсами.
 
@@ -12,3 +18,5 @@
 ---
 
 Multitrack audio editor for Windows 10/11 x64. Record, edit, mix, process and convert audio; extract audio from video; save portable projects. Russian / English UI. Experimental offline monophonic vocal correction. Unsigned preview builds.
+
+0.1.2 fixes bundled FFmpeg paths in packaged apps, desktop drag-and-drop import, disappearing import errors, and microphone permission handling. Windows privacy restrictions must still be changed by the user; the app provides a settings shortcut and retry.

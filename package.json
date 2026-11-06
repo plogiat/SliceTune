@@ -1,6 +1,6 @@
 {
   "name": "slicetune",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "SliceTune — a bilingual multitrack audio editor for Windows",
   "author": "SliceTune contributors",
   "repository": {
@@ -25,6 +25,7 @@
     "soundtouchjs": "0.3.0"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@playwright/test": "1.58.2",
     "electron": "45.2.3",
     "electron-builder": "26.18.0",

@@ -10,7 +10,7 @@ let language = localStorage.getItem('slicetune-language') === 'en' ? 'en' : 'ru'
 let project = newProject(); project.name = t('untitled');
 let history = new History(), selected = null, position = 0, zoom = 32, dirty = false, busy = false, clipboard = null, mixerVisible = true, modal = null, recorder = null, recordingStream = null, recordingStart = 0, recordingWallStart = 0, micId = '', devices = [], recovery = null, autosaveTimer = null, saveRevision = 0, autosaved = false;
 const desktop = window.desktop;
-let renameTrackId = null;
+let renameTrackId = null, micPending = false, micProblem = 'micDenied';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const button = (action, name, label, extra = '') => `<button data-action="${action}" title="${esc(label)}" aria-label="${esc(label)}" ${extra}>${icon(name)}</button>`;
@@ -36,8 +36,11 @@ function serialize() {
 async function task(job) {
   if (busy || recorder) { toast(t('busy')); return; }
   busy = true; stop(); render();
-  try { await job(); } catch (err) { console.error(err); toast(`${t('error')}: ${err.message}`, true); }
+  let failure;
+  try { await job(); } catch (err) { console.error(err); failure = err; }
   finally { busy = false; render(); }
+  // render() replaces the toast node. Report failures after the final render.
+  if (failure) toast(`${t('error')}: ${failure.message}`, true);
 }
 function slider(name, value, min, max, step, label, suffix = '', attributes = '') {
   return `<label class="control"><span>${esc(label)}<output>${esc(value)}${suffix}</output></span><input aria-label="${esc(label)}" type="range" data-param="${name}" min="${min}" max="${max}" step="${step}" value="${value}" ${attributes}></label>`;
@@ -106,8 +109,8 @@ function drawWaves() {
 function renderModal() {
   const root = document.querySelector('#modal-root');
   const rename = project.tracks.find(tr => tr.id === renameTrackId);
-  const contents = modal === 'rename-track' ? `<h2>${t('rename')}</h2><label class="select-label">${t('renamePrompt')}<input id="rename-value" maxlength="200" value="${esc(rename?.name)}"></label><div class="modal-actions"><button class="secondary" data-action="close-modal">${t('cancel')}</button><button class="primary" data-action="do-rename">${t('apply')}</button></div>` : modal === 'export' ? `<h2>${t('exportTitle')}</h2><p>${t('exportHint')}</p><label class="select-label">${t('format')}<select id="export-format">${(desktop ? ['wav','mp3','flac','ogg'] : ['wav']).map(f => `<option value="${f}">${f.toUpperCase()}</option>`).join('')}</select></label><label class="select-label">${t('scope')}<select id="export-scope"><option value="mix">${t('mix')}</option>${chosen().track ? `<option value="track">${t('selectedTrack')}</option>` : ''}${chosen().clip ? `<option value="clip">${t('selectedClip')}</option>` : ''}</select></label><div class="modal-actions"><button class="secondary" data-action="close-modal">${t('cancel')}</button><button class="primary" data-action="do-export">${t('export')}</button></div>` : `<h2>${t('help')}</h2><p class="shortcut-text">${esc(t('helpText'))}</p><p>${t('micHint')} ${t('recordHint')}</p><button class="primary" data-action="close-modal">${t('close')}</button>`;
-  root.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${modal === 'export' ? t('exportTitle') : t('help')}">${contents}</section></div>`;
+  const contents = modal === 'microphone' ? `<h2>${t('micProblem')}</h2><p>${t(micProblem)}</p>${micProblem === 'micDenied' ? `<p>${t(desktop?.platform === 'win32' ? 'micWindowsHelp' : 'micPermissionHelp')}</p>` : ''}<div class="modal-actions"><button class="secondary" data-action="close-modal">${t('close')}</button>${micProblem === 'micDenied' && desktop?.platform === 'win32' ? `<button class="secondary" data-action="mic-settings">${t('micSettings')}</button>` : ''}<button class="primary" data-action="retry-record">${t('retry')}</button></div>` : modal === 'rename-track' ? `<h2>${t('rename')}</h2><label class="select-label">${t('renamePrompt')}<input id="rename-value" maxlength="200" value="${esc(rename?.name)}"></label><div class="modal-actions"><button class="secondary" data-action="close-modal">${t('cancel')}</button><button class="primary" data-action="do-rename">${t('apply')}</button></div>` : modal === 'export' ? `<h2>${t('exportTitle')}</h2><p>${t('exportHint')}</p><label class="select-label">${t('format')}<select id="export-format">${(desktop ? ['wav','mp3','flac','ogg'] : ['wav']).map(f => `<option value="${f}">${f.toUpperCase()}</option>`).join('')}</select></label><label class="select-label">${t('scope')}<select id="export-scope"><option value="mix">${t('mix')}</option>${chosen().track ? `<option value="track">${t('selectedTrack')}</option>` : ''}${chosen().clip ? `<option value="clip">${t('selectedClip')}</option>` : ''}</select></label><div class="modal-actions"><button class="secondary" data-action="close-modal">${t('cancel')}</button><button class="primary" data-action="do-export">${t('export')}</button></div>` : `<h2>${t('help')}</h2><p class="shortcut-text">${esc(t('helpText'))}</p><p>${t('micHint')} ${t('recordHint')}</p><button class="primary" data-action="close-modal">${t('close')}</button>`;
+  root.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${t(modal === 'microphone' ? 'micProblem' : modal === 'export' ? 'exportTitle' : modal === 'rename-track' ? 'rename' : 'help')}">${contents}</section></div>`;
   (document.querySelector('#rename-value') || document.querySelector('.modal button'))?.focus();
 }
 function download(data, name, type) { const url = URL.createObjectURL(new Blob([data], {type})); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000); }
@@ -123,7 +126,26 @@ async function addAudio(name, data, start = 0, trackId = null) {
 async function importFiles(files) {
   const decoded = [];
   for (const file of files) { if (file.size > 500 * 1024 * 1024) throw new Error(t('fileLimit')); const data = await file.arrayBuffer(); const buffer = await engine.context.decodeAudioData(data); decoded.push({ name: file.name, data: toBase64(engine.wav(buffer)) }); }
-  beforeEdit(); for (const file of decoded) await addAudio(file.name, file.data); changed();
+  await importAudioData(decoded);
+}
+async function importAudioData(files, placement = {}) {
+  if (!files?.length) return;
+  const target = project.tracks.find(tr => tr.id === placement.trackId);
+  if (!target && project.tracks.length + files.length > 128) throw new Error(t('trackLimit'));
+  if (Object.values(project.assets).reduce((sum, a) => sum + a.data.length, 0) + files.reduce((sum, file) => sum + file.data.length, 0) > 500 * 1024 * 1024) throw new Error(t('memoryLimit'));
+  // Decode the entire batch before editing the project so a failed file cannot
+  // leave partially imported tracks without dirty state or an undo snapshot.
+  const decoded = [];
+  for (const file of files) decoded.push({ ...file, buffer: await engine.decode(file.data) });
+  beforeEdit(); let start = placement.start || 0;
+  for (const file of decoded) {
+    const id = uid(), tr = target || newTrack(file.name.replace(/\.[^.]+$/, ''), project.tracks.length), c = newClip(id, file.buffer.duration, start);
+    engine.buffers.set(id, file.buffer); project.assets[id] = { name: file.name, data: file.data };
+    if (!target) project.tracks.push(tr);
+    tr.clips.push(c); selected = { trackId: tr.id, clipId: c.id };
+    if (target) start += file.buffer.duration;
+  }
+  changed();
 }
 function filePicker(accept, handler) { const input = document.createElement('input'); input.type = 'file'; input.accept = accept; input.multiple = accept !== '.slicetune'; input.onchange = () => task(() => handler([...input.files])); input.click(); }
 async function loadProject(data) {
@@ -140,12 +162,15 @@ async function save() {
 }
 async function startRecording() {
   if (recorder) { recorder.stop(); return; }
-  if (busy) return;
+  if (busy || micPending) return;
   if (project.tracks.length >= 128) throw new Error(t('trackLimit'));
   stop(); recordingStart = position;
-  recordingStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  recordingStream = await acquireMicrophone({ deviceId: micId ? { exact: micId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false });
+  if (!recordingStream) return;
   const mimeType = ['audio/webm;codecs=opus','audio/webm'].find(type => MediaRecorder.isTypeSupported(type));
-  const chunks = []; recorder = new MediaRecorder(recordingStream, mimeType ? {mimeType} : undefined);
+  const chunks = [];
+  try { recorder = new MediaRecorder(recordingStream, mimeType ? {mimeType} : undefined); }
+  catch (error) { recordingStream.getTracks().forEach(tr => tr.stop()); recordingStream = null; throw error; }
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = async () => {
     const stoppedRecorder = recorder; recorder = null; recordingStream.getTracks().forEach(t => t.stop()); recordingStream = null;
@@ -160,7 +185,20 @@ async function startRecording() {
   recorder.onerror = e => { toast(e.error?.message || t('error'), true); if (recorder?.state !== 'inactive') recorder?.stop(); };
   recorder.start(250); recordingWallStart = performance.now();
   try { await engine.play(project, recordingStart); } catch (error) { recorder.stop(); throw error; }
-  devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); render();
+  try { devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { /* Recording can continue if enumeration fails. */ }
+  render();
+}
+async function acquireMicrophone(constraints = true) {
+  if (micPending) return null;
+  micPending = true;
+  try { return await navigator.mediaDevices.getUserMedia({ audio: constraints }); }
+  catch (error) {
+    if (['NotAllowedError', 'SecurityError', 'PermissionDeniedError'].includes(error.name)) micProblem = 'micDenied';
+    else if (['NotFoundError', 'OverconstrainedError', 'DevicesNotFoundError'].includes(error.name)) { micProblem = 'micMissing'; micId = ''; }
+    else if (['NotReadableError', 'TrackStartError', 'AbortError'].includes(error.name)) micProblem = 'micUnavailable';
+    else throw error;
+    modal = 'microphone'; render(); return null;
+  } finally { micPending = false; }
 }
 async function demo() {
   if (dirty && !confirm(t('discard'))) return;
@@ -206,7 +244,7 @@ async function action(name, element) {
   if ((busy || recorder) && !['stop','record','ru','en'].includes(name)) { toast(t('busy')); return; }
   const {track,clip} = chosen();
   if (name === 'ru' || name === 'en') { language = name; t = translator(language); localStorage.setItem('slicetune-language',language); desktop?.setLanguage(language); render(); return; }
-  if (name === 'import') return desktop ? task(async () => { const files = await desktop.importAudio(); if (files?.length) { beforeEdit(); for (const file of files) await addAudio(file.name,file.data); changed(); } }) : filePicker('audio/*',importFiles);
+  if (name === 'import') return desktop ? task(async () => importAudioData(await desktop.importAudio())) : filePicker('audio/*',importFiles);
   if (name === 'demo') return task(demo);
   if (name === 'open') { if (dirty && !confirm(t('discard'))) return; return desktop ? task(async () => { const data = await desktop.openProject(); if (data) await loadProject(data); }) : filePicker('.slicetune', async files => { if (files[0]) { if (files[0].size > 512*1024*1024) throw new Error(t('memoryLimit')); await loadProject(await files[0].text()); } }); }
   if (name === 'new') { if (dirty && !confirm(t('discard'))) return; clearTimeout(autosaveTimer); stop(false); project = newProject(); project.name = t('untitled'); engine.buffers.clear(); selected = null; clipboard = null; dirty = false; autosaved = false; history = new History(); saveRevision++; render(); return; }
@@ -214,7 +252,9 @@ async function action(name, element) {
   if (name === 'play') { if (!endTime(project)) return toast(t('noAudio')); if (engine.playing) stop(); else { if (position >= endTime(project) + 3) position = 0; await engine.play(project,position); } render(); return; }
   if (name === 'stop') { if (recorder) recorder.stop(); else {stop(false); render();} return; }
   if (name === 'record') return startRecording();
-  if (name === 'devices') { let stream; try { stream = await navigator.mediaDevices.getUserMedia({audio:true}); devices = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'); render(); } finally { stream?.getTracks().forEach(tr=>tr.stop()); } return; }
+  if (name === 'devices') { let stream; try { stream = await acquireMicrophone(); if (!stream) return; devices = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'); render(); } finally { stream?.getTracks().forEach(tr=>tr.stop()); } return; }
+  if (name === 'mic-settings') return desktop?.openMicrophoneSettings();
+  if (name === 'retry-record') { modal = null; render(); return startRecording(); }
   if (name === 'help' || name === 'export') { if (name==='export' && !endTime(project)) return toast(t('noAudio')); modal=name; renderModal(); return; }
   if (name === 'close-modal') { modal=null; document.querySelector('#modal-root').innerHTML=''; return; }
   if (name === 'do-rename') { const value=document.querySelector('#rename-value').value.trim(),tr=project.tracks.find(tr=>tr.id===renameTrackId);if(value&&tr){beforeEdit();tr.name=value.slice(0,200);modal=null;changed();}return; }
@@ -254,12 +294,17 @@ document.addEventListener('keydown', event=>{
   if(name){event.preventDefault();action(name,{}).catch(err=>toast(err.message,true));}
 });
 document.addEventListener('dragstart',event=>{const asset=event.target.closest('[data-asset]');if(asset){event.dataTransfer.setData('application/slicetune-asset',asset.dataset.asset);event.dataTransfer.effectAllowed='copy';}});
-document.addEventListener('dragover',event=>{if(event.target.closest('.track-lane,.empty-session'))event.preventDefault();});
+document.addEventListener('dragover',event=>{if(event.target.closest('.workspace'))event.preventDefault();});
 document.addEventListener('drop',event=>{
-  const lane=event.target.closest('[data-lane]');if(!lane&&!event.target.closest('.empty-session'))return;event.preventDefault();if(busy||recorder)return;
+  const lane=event.target.closest('[data-lane]');if(!event.target.closest('.workspace'))return;event.preventDefault();if(busy||recorder)return;
   const asset=event.dataTransfer.getData('application/slicetune-asset');
   if(asset&&project.assets[asset]) { const tr=project.tracks.find(t=>t.id===lane?.dataset.lane);if(!tr)return;beforeEdit();const clip=newClip(asset,engine.buffers.get(asset).duration,Math.max(0,(event.clientX-lane.getBoundingClientRect().left)/zoom));tr.clips.push(clip);selected={trackId:tr.id,clipId:clip.id};changed(); }
-  else if(event.dataTransfer.files.length) { if(desktop) toast(t('importHint')+': '+t('import')); else task(()=>importFiles([...event.dataTransfer.files])); }
+  else if(event.dataTransfer.files.length) {
+    if (desktop) {
+      try { const paths = desktop.pathsForFiles([...event.dataTransfer.files]); const placement = lane ? { trackId: lane.dataset.lane, start: Math.max(0, (event.clientX - lane.getBoundingClientRect().left) / zoom) } : {}; task(async () => importAudioData(await desktop.importDroppedFiles(paths), placement)); }
+      catch(error) { toast(`${t('error')}: ${error.message}`, true); }
+    } else task(()=>importFiles([...event.dataTransfer.files]));
+  }
 });
 document.addEventListener('pointerdown',event=>{
   if(busy||recorder||event.button!==0)return;

@@ -1,7 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { decodeFile, processAudio, encodeFile } = require('./audio.cjs');
+const { pathToFileURL } = require('node:url');
+const { createMediaPermissionPolicy } = require('./permissions.cjs');
+const documentPath = path.join(__dirname, '../dist/index.html');
 let win, language = 'ru';
 const text = (ru, en) => language === 'ru' ? ru : en;
 const autosavePath = () => path.join(app.getPath('userData'), 'recovery.slicetune');
@@ -21,12 +24,11 @@ function register() {
   ipcMain.handle('importAudio', async () => {
     const result = await dialog.showOpenDialog(win, { title: text('Добавить аудио или видео', 'Import audio or video'), properties: ['openFile', 'multiSelections'], filters: [{ name: text('Аудио и видео', 'Audio & video'), extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac', 'aiff', 'opus', 'mp4', 'mkv', 'mov', 'webm', 'avi'] }] });
     if (result.canceled) return null;
-    const files = [];
-    for (const file of result.filePaths) {
-      if ((await fs.stat(file)).size > 500 * 1024 * 1024) throw new Error(text('Файл больше 500 МБ', 'File exceeds 500 MB'));
-      files.push({ name: path.basename(file), data: await decodeFile(file) });
-    }
-    return files;
+    return importPaths(result.filePaths);
+  });
+  ipcMain.handle('importDroppedFiles', (_, files) => importPaths(files));
+  ipcMain.handle('openMicrophoneSettings', async () => {
+    if (process.platform === 'win32') await shell.openExternal('ms-settings:privacy-microphone');
   });
   ipcMain.handle('openProject', async () => {
     const result = await dialog.showOpenDialog(win, { title: text('Открыть проект', 'Open project'), filters: [{ name: 'SliceTune', extensions: ['slicetune'] }] });
@@ -53,11 +55,22 @@ function register() {
     return true;
   });
 }
+async function importPaths(paths) {
+  if (!Array.isArray(paths) || !paths.length || paths.length > 128 || paths.some(file => typeof file !== 'string' || !path.isAbsolute(file))) throw new Error(text('Неверный список файлов', 'Invalid file list'));
+  const files = [];
+  for (const file of paths) {
+    const info = await fs.stat(file);
+    if (!info.isFile()) throw new Error(text('Выберите файл, а не папку', 'Select a file, not a folder'));
+    if (info.size > 500 * 1024 * 1024) throw new Error(text('Файл больше 500 МБ', 'File exceeds 500 MB'));
+    try { files.push({ name: path.basename(file), data: await decodeFile(file) }); }
+    catch (error) { throw new Error(`${path.basename(file)}: ${error.message}`); }
+  }
+  return files;
+}
 app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
-    const url = contents.getURL();
-    callback(contents === win?.webContents && (url.startsWith('file://') || url.startsWith('http://127.0.0.1:5173/')) && permission === 'media' && details.mediaTypes?.every(type => type === 'audio'));
-  });
+  const permissions = createMediaPermissionPolicy(() => win?.webContents, pathToFileURL(documentPath).href);
+  session.defaultSession.setPermissionCheckHandler(permissions.check);
+  session.defaultSession.setPermissionRequestHandler(permissions.request);
   register();
   win = new BrowserWindow({ width: 1500, height: 970, minWidth: 1050, minHeight: 720, backgroundColor: '#241321', title: 'SliceTune', autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -66,6 +79,6 @@ app.whenReady().then(() => {
     const response = dialog.showMessageBoxSync(win, { type: 'question', title: 'SliceTune', message: text('Есть несохранённые изменения или активная запись. Закрыть приложение?', 'There are unsaved changes or an active recording. Close the app?'), buttons: [text('Закрыть без сохранения', 'Close without saving'), text('Отмена', 'Cancel')], defaultId: 1, cancelId: 1 });
     if (response === 0) event.preventDefault();
   });
-  win.loadFile(path.join(__dirname, '../dist/index.html'));
+  win.loadFile(documentPath);
 });
 app.on('window-all-closed', () => app.quit());
