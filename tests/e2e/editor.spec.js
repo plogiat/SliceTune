@@ -33,3 +33,22 @@ test('system-denied microphone shows Windows instructions and permits retry',asy
   await page.locator('[data-action="mic-settings"]').click();expect(await page.evaluate(()=>window.settingsOpened)).toBe(true);
   await page.locator('[data-action="retry-record"]').click();await expect(page.locator('.record.active')).toBeVisible();await page.waitForTimeout(500);await page.locator('[data-action="stop"]').click();await expect(page.locator('.clip')).toHaveCount(1);
 });
+test('sliders change live while transport and clock keep running',async({page})=>{
+ await page.goto('/');await page.locator('[data-action="demo"]').first().click();await expect(page.locator('.clip')).toHaveCount(3);await page.locator('.clip').nth(1).click();await page.locator('[data-action="play"]').click();
+ const initial=await page.locator('#timecode').textContent();
+ for(const selector of ['#master','[data-track-gain]','[data-track-pan]','[data-param="gain"]','[data-param="low"]','[data-param="fadeIn"]','#zoom']){
+  await page.locator(selector).first().evaluate(el=>{el.value=el.id==='zoom'?'35':el.dataset.param==='low'?'5':'0.4';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));});
+  await expect(page.locator('[data-action="play"]')).toHaveAttribute('aria-label','Пауза');
+ }
+ await page.waitForTimeout(200);expect(await page.locator('#timecode').textContent()).not.toBe(initial);
+ // Exercise the live graph itself: controls update AudioParams without replacing sources.
+ const state=await page.evaluate(async()=>{const {AudioEngine}=await import('/src/engine.js');const {newProject,newTrack,newClip}=await import('/src/model.js');const e=new AudioEngine(),p=newProject(),t=newTrack('test');const b=e.context.createBuffer(1,48000*3,48000);b.getChannelData(0).fill(.1);e.buffers.set('a',b);t.clips.push(newClip('a',3));p.tracks.push(t);await e.play(p,0);const source=e.nodes[0];t.pan=.7;t.gain=.3;t.clips[0].low=6;e.update(p);await new Promise(r=>setTimeout(r,100));const result={same:source===e.nodes[0],playing:e.playing,pan:e.graph.tracks.get(t.id).pan.pan.value,eq:e.graph.clips.get(t.clips[0].id).filters.lowshelf.gain.value};e.stop();await e.context.close();return result;});
+ expect(state.same).toBe(true);expect(state.playing).toBe(true);expect(state.pan).toBeCloseTo(.7,1);expect(state.eq).toBeCloseTo(6,1);
+});
+test('drag a waveform range, delete only that interval, then undo',async({page})=>{
+ await page.goto('/');await page.locator('[data-action="demo"]').first().click();await expect(page.locator('.clip')).toHaveCount(3);
+ const lane=page.locator('[data-lane]').first(),rect=await lane.boundingBox();await page.mouse.move(rect.x+64,rect.y+55);await page.mouse.down();await page.mouse.move(rect.x+192,rect.y+55,{steps:8});await page.mouse.up();
+ await expect(page.locator('.range-selection')).toBeVisible();await page.keyboard.press('Delete');await expect(lane.locator('.clip')).toHaveCount(2);
+ const bounds=await lane.locator('.clip').evaluateAll(clips=>clips.map(c=>[parseFloat(c.style.left),parseFloat(c.style.width)]));expect(bounds).toEqual([[0,64],[192,320]]);
+ await page.locator('[data-action="undo"]').click();await expect(lane.locator('.clip')).toHaveCount(1);
+});

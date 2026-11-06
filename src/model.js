@@ -27,6 +27,25 @@ export function trimClip(clip, edge, amount) {
   }
   clip.fadeIn = Math.min(clip.fadeIn, clip.duration); clip.fadeOut = Math.min(clip.fadeOut, clip.duration);
 }
+export function deleteRange(track, start, end) {
+  const from = Math.min(start, end), to = Math.max(start, end);
+  if (to - from < 0.001) return false;
+  let changed = false;
+  track.clips = track.clips.flatMap(clip => {
+    const finish = clip.start + clip.duration;
+    if (clip.start >= to || finish <= from) return [clip];
+    changed = true;
+    const pieces = [];
+    const portion = (a, b) => ({ ...clip, id: uid(), start: a, duration: b - a,
+      offset: clip.offset + (clip.reverse ? finish - b : a - clip.start),
+      fadeIn: a === clip.start ? Math.min(clip.fadeIn, b - a) : 0,
+      fadeOut: b === finish ? Math.min(clip.fadeOut, b - a) : 0 });
+    if (from > clip.start) pieces.push(portion(clip.start, from));
+    if (to < finish) pieces.push(portion(to, finish));
+    return pieces;
+  });
+  return changed;
+}
 const finite = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 export function validateProject(p) {
   if (!p || p.app !== 'SliceTune' || p.version !== 1 || typeof p.name !== 'string' || p.name.length > 200 || !Array.isArray(p.tracks) || p.tracks.length > 128 || !p.assets || typeof p.assets !== 'object' || Array.isArray(p.assets) || !finite(p.master, 0, 1.5)) throw new Error('Invalid SliceTune project');
