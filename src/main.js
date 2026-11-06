@@ -10,6 +10,8 @@ let language = localStorage.getItem('slicetune-language') === 'en' ? 'en' : 'ru'
 let project = newProject(); project.name = t('untitled');
 let history = new History(), selected = null, position = 0, zoom = 32, dirty = false, busy = false, clipboard = null, mixerVisible = true, modal = null, recorder = null, recordingStream = null, recordingStart = 0, recordingWallStart = 0, micId = '', devices = [], recovery = null, autosaveTimer = null, saveRevision = 0, autosaved = false;
 const desktop = window.desktop;
+const inspectorState = new Map();
+let renderedInspectorClipId = null;
 let rangeSelection = null, editTool = 'range', controlEdits = new WeakSet();
 let renameTrackId = null, micPending = false, micProblem = 'micDenied';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
@@ -47,6 +49,14 @@ function slider(name, value, min, max, step, label, suffix = '', attributes = ''
   return `<label class="control"><span>${esc(label)}<output>${esc(value)}${suffix}</output></span><input aria-label="${esc(label)}" type="range" data-param="${name}" min="${min}" max="${max}" step="${step}" value="${value}" ${attributes}></label>`;
 }
 function render() {
+  const previousInspector = document.querySelector('.inspector');
+  if (previousInspector && renderedInspectorClipId) {
+    inspectorState.set(renderedInspectorClipId, {
+      open: [...previousInspector.querySelectorAll('details')].map(el => el.open),
+      scroll: previousInspector.scrollTop,
+      values: Object.fromEntries([...previousInspector.querySelectorAll('input[id],select[id]')].map(el => [el.id, el.value]))
+    });
+  }
   const scroll = document.querySelector('#timeline'); const oldScroll = scroll ? { left: scroll.scrollLeft, top: scroll.scrollTop } : { left: 0, top: 0 };
   const { track, clip } = chosen(), duration = Math.max(30, Math.ceil((endTime(project) + 8) / 5) * 5), width = Math.max(760, duration * zoom);
   document.documentElement.lang = language;
@@ -77,6 +87,15 @@ function render() {
     <aside class="inspector"><div class="panel-title"><span>${icon('sliders-horizontal')}${t('effects')}</span></div>${clip ? inspector(clip, track) : `<div class="inspector-empty">${icon('mouse-pointer-2')}<h3>${t('selected')}</h3><p>${t('selectHint')}</p></div><div class="effect-preview"><span>01 / SHAPE</span><h3>${t('eq')}</h3><div class="eq-art"></div><span>02 / SPACE</span><h3>${t('reverb')} + ${t('delay')}</h3><div class="rings"></div></div>`}</aside>
   </main><footer class="statusbar"><span>${icon('audio-lines')} ${t('version')}</span><span>${project.tracks.length} ${t('tracks')} · ${Object.keys(project.assets).length} ${t('assets')}</span><span>${t('duration')}: ${time(endTime(project))}</span><span class="footer-right">${desktop ? 'LOCAL AUDIO / NO CLOUD' : t('browserHint')}</span></footer><div id="modal-root"></div><div id="toast" class="toast" role="status" aria-live="polite"></div>${busy ? `<div class="busy-overlay"><div class="spinner"></div><strong id="busy-label">${t('processing')}</strong></div>` : ''}`;
   createIcons({ icons, attrs: { 'stroke-width': 1.7 } });
+  renderedInspectorClipId = clip?.id || null;
+  const state = inspectorState.get(renderedInspectorClipId), inspectorPanel = document.querySelector('.inspector');
+  if (state) {
+    inspectorPanel.querySelectorAll('details').forEach((el, index) => { el.open = state.open[index] ?? el.open; });
+    for (const [id, value] of Object.entries(state.values)) {
+      const el = document.getElementById(id); if (el) { el.value = value; if (id === 'tune-amount') el.closest('label').querySelector('output').textContent = `${value}%`; }
+    }
+    inspectorPanel.scrollTop = state.scroll;
+  }
   const timeline = document.querySelector('#timeline'); timeline.scrollLeft = oldScroll.left; timeline.scrollTop = oldScroll.top;
   updateStatus(); requestAnimationFrame(drawWaves);
   if (modal) renderModal();
@@ -299,7 +318,7 @@ document.addEventListener('change', event=>{
   if(busy||recorder)return;
   if(liveControl(el)){if(!controlEdits.has(el))beforeEdit(false);controlEdits.delete(el);updateControl(el);engine.update(project);changed();return;}
   if(el.id==='project-name'){beforeEdit(false);project.name=el.value.trim()||t('untitled');changed();return;}
-  if(el.dataset.param){const {clip}=chosen();if(clip){beforeEdit();clip[el.dataset.param]=el.checked;changed();}}
+  if(el.dataset.param){const {clip}=chosen();if(clip){const live=el.dataset.param==='compressor';beforeEdit(!live);clip[el.dataset.param]=el.checked;if(live)engine.update(project);changed();}}
 });
 document.addEventListener('keydown', event=>{
   if(modal) { if(event.key==='Escape'){modal=null;render();} if(event.key==='Enter'&&modal==='rename-track'){action('do-rename',{}).catch(err=>toast(err.message,true));} if(event.key==='Tab'){const nodes=[...document.querySelectorAll('.modal button,.modal select,.modal input')],first=nodes[0],last=nodes.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}} return; }

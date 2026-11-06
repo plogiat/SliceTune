@@ -44,7 +44,9 @@ export class AudioEngine {
         for (const [type, freq, value] of [['lowshelf', 200, clip.low], ['peaking', 1200, clip.mid], ['highshelf', 5000, clip.high]]) {
           const filter = ctx.createBiquadFilter(); filter.type = type; filter.frequency.value = freq; filter.gain.value = value; filter.Q.value = 0.7; tail.connect(filter); tail = filter; live.filters[type] = filter;
         }
-        if (clip.compressor) { const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -24; comp.ratio.value = 4; comp.knee.value = 20; tail.connect(comp); tail = comp; }
+        // Keep the node connected so toggling compression never restarts sources.
+        // Ratio 1 is neutral, with the same processing latency in either state.
+        const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -24; comp.ratio.value = clip.compressor ? 4 : 1; comp.knee.value = 20; tail.connect(comp); tail = comp; live.compressor = comp;
         tail.connect(level);
         const reverb = ctx.createConvolver(), reverbWet = ctx.createGain(); reverb.buffer = this.impulse(ctx); reverbWet.gain.value = clip.reverb; tail.connect(reverb).connect(reverbWet).connect(level);
         const delay = ctx.createDelay(1), delayWet = ctx.createGain(), feedback = ctx.createGain(); delay.delayTime.value = 0.28; delayWet.gain.value = clip.delay; feedback.gain.value = 0.32; tail.connect(delay).connect(delayWet).connect(level); delay.connect(feedback).connect(delay);
@@ -80,6 +82,7 @@ export class AudioEngine {
         this.envelope(live.gain, clip, now, position);
         smooth(live.filters.lowshelf.gain, clip.low); smooth(live.filters.peaking.gain, clip.mid); smooth(live.filters.highshelf.gain, clip.high);
         smooth(live.reverbWet.gain, clip.reverb); smooth(live.delayWet.gain, clip.delay);
+        smooth(live.compressor.ratio, clip.compressor ? 4 : 1);
       }
     }
   }

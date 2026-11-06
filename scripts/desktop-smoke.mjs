@@ -46,6 +46,13 @@ try {
   const saved=JSON.parse(await readFile(path.join(root,'Новый проект.slicetune'),'utf8'));assert.equal(Object.keys(saved.assets).length,2);assert.ok(Math.abs(saved.tracks[0].clips[0].duration-1)<.1);
   console.log('PASS: Electron portable project save');
   for(const format of ['wav','mp3','flac','ogg']) {await page.locator('[data-action="export"]').click();await page.locator('#export-format').selectOption(format);await page.locator('[data-action="do-export"]').click();await page.locator('.busy-overlay').waitFor({state:'hidden',timeout:30000});assert.ok((await stat(path.join(root,`Новый проект.${format}`))).size>100);}
+  const space=page.locator('details').filter({has:page.locator('[data-param="delay"]')});
+  await space.locator('summary').click();await page.locator('[data-action="play"]').click();
+  await page.locator('[data-param="delay"]').evaluate(el=>{el.value='.2';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));});
+  assert.notEqual(await space.getAttribute('open'),null);
+  for(const checked of [true,false]){await page.locator('[data-param="compressor"]').setChecked(checked);assert.equal(await page.locator('[data-action="play"]').getAttribute('aria-label'),'Пауза');assert.notEqual(await space.getAttribute('open'),null);}
+  await page.locator('[data-action="stop"]').click();
+  console.log('PASS: echo panel stays open and compressor toggles without stopping playback');
   // A real File from a file input retains its OS path across the context bridge.
   // A synthetic new File() cannot catch desktop drag-and-drop regressions.
   await page.evaluate(()=>{const input=document.createElement('input');input.type='file';input.id='drop-fixture';input.style.display='none';document.body.append(input);});
