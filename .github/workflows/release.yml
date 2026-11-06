@@ -19,7 +19,16 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: node scripts/desktop-smoke.mjs
-      - run: npm run dist:win
+      - name: Build Windows packages
+        shell: pwsh
+        run: |
+          npm run dist:win 2>&1 | Tee-Object -FilePath packaging.log
+          if ($LASTEXITCODE -ne 0) {
+            $detail = (Get-Content packaging.log -Tail 35) -join "`n"
+            $detail = $detail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows packaging failed::$detail"
+            exit 1
+          }
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4

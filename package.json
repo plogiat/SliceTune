@@ -1,8 +1,12 @@
 {
   "name": "slicetune",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SliceTune — a bilingual multitrack audio editor for Windows",
   "author": "SliceTune contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plogiat/SliceTune.git"
+  },
   "license": "GPL-3.0-only",
   "private": true,
   "main": "electron/main.cjs",
@@ -12,8 +16,8 @@
     "build": "vite build",
     "test": "node --test --test-isolation=none tests/*.test.mjs",
     "test:e2e": "playwright test",
-    "dist:win": "npm run build && electron-builder --win nsis zip",
-    "dist:zip": "npm run build && electron-builder --win zip -c.win.signAndEditExecutable=false"
+    "dist:win": "npm run build && electron-builder --win nsis zip --publish never",
+    "dist:zip": "npm run build && electron-builder --win zip --publish never"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "1.1.0",
@@ -29,11 +33,36 @@
   "build": {
     "appId": "io.slicetune.editor",
     "productName": "SliceTune",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*", "package.json", "LICENSE", "THIRD_PARTY_NOTICES.md", "!node_modules/@ffmpeg-installer/linux-*/**/*", "!node_modules/@ffmpeg-installer/darwin-*/**/*"],
-    "asarUnpack": ["node_modules/@ffmpeg-installer/**/*"],
-    "win": { "target": ["nsis", "zip"], "icon": "docs/icon.ico", "signExecutable": false, "artifactName": "SliceTune-${version}-Windows-${arch}.${ext}" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "artifactName": "SliceTune-${version}-Setup-${arch}.${ext}" }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "!node_modules/@ffmpeg-installer/linux-*/**/*",
+      "!node_modules/@ffmpeg-installer/darwin-*/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/@ffmpeg-installer/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "docs/icon.ico",
+      "signExecutable": false,
+      "artifactName": "SliceTune-${version}-Windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "SliceTune-${version}-Setup-${arch}.${ext}"
+    }
   },
   "type": "module"
 }
